@@ -2,8 +2,8 @@ name: Daily PFZ Map
 
 on:
   schedule:
-    - cron: "0 3 * * *"   # daily at 03:00 UTC
-  workflow_dispatch:
+    - cron: "0 3 * * *"   # Runs daily at 03:00 UTC
+  workflow_dispatch:      # Allows you to click "Run" manually
 
 jobs:
   run-pfz:
@@ -18,9 +18,14 @@ jobs:
       with:
         python-version: "3.10"
 
-    - name: Install dependencies
+    - name: Install System Dependencies
       run: |
-        pip install xarray netCDF4 numpy matplotlib cartopy
+        sudo apt-get update
+        sudo apt-get install -y libgeos-dev libproj-dev proj-data proj-bin
+
+    - name: Install Python dependencies
+      run: |
+        pip install xarray netCDF4 numpy matplotlib cartopy scipy dask h5netcdf
 
     - name: Run PFZ pipeline
       run: |
@@ -31,5 +36,5 @@ jobs:
         git config --global user.name "github-actions"
         git config --global user.email "actions@github.com"
         git add outputs/
-        git commit -m "Daily PFZ map" || echo "No changes"
+        git commit -m "Auto-update PFZ map $(date)" || echo "No changes"
         git push
