@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 os.makedirs("outputs", exist_ok=True)
 
 # Define Area: Bay of Bengal
-LAT_MIN, LAT_MAX = 17, 24
-LON_MIN, LON_MAX = 83, 94
+LAT_MIN, LAT_MAX = 15, 24
+LON_MIN, LON_MAX = 85, 94
 
 # Use 4-day buffer to be safe (ERDDAP can be slow to update)
 target_dt = datetime.utcnow() - timedelta(days=4)
@@ -76,7 +76,7 @@ def generate_pfz():
                    transform=ccrs.PlateCarree(), zorder=4)
 
         plt.title(f"Potential Fishing Zones (PFZ)\nDate: {actual_date} | Bay of Bengal")
-        plt.legend(loc='lower right')
+        plt.legend(loc='upper left')
 
         # 5. SAVE
         out_file = "outputs/latest_pfz.png"
