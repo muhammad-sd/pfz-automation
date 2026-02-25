@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 os.makedirs("outputs", exist_ok=True)
 
 # Define Area: Bay of Bengal
-LAT_MIN, LAT_MAX = 17, 23
-LON_MIN, LON_MAX = 88, 94
+LAT_MIN, LAT_MAX = 17, 24
+LON_MIN, LON_MAX = 83, 94
 
 # Use 4-day buffer to be safe (ERDDAP can be slow to update)
 target_dt = datetime.utcnow() - timedelta(days=4)
@@ -72,7 +72,7 @@ def generate_pfz():
         # Overlay PFZ
         y_idx, x_idx = np.where(pfz_mask == 1)
         ax.scatter(lons[x_idx], lats[y_idx], 
-                   color='#00ff00', s=5, label='Potential Fishing Front', 
+                   color='#00ff00', s=100,alpha=0.6, label='Potential Fishing Area', 
                    transform=ccrs.PlateCarree(), zorder=4)
 
         plt.title(f"Potential Fishing Zones (PFZ)\nDate: {actual_date} | Bay of Bengal")
