@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 os.makedirs("outputs", exist_ok=True)
 
 # Define Area: Bay of Bengal
-LAT_MIN, LAT_MAX = 15, 24
+LAT_MIN, LAT_MAX = 14, 25
 LON_MIN, LON_MAX = 85.5, 94
 
 # Use 4-day buffer to be safe (ERDDAP can be slow to update)
@@ -82,10 +82,10 @@ def generate_pfz():
 
         # Overlay PFZ as combined shapes
         ax.contourf(
-            lons, lats, np.nan_to_num(pfz_mask),  # convert NaNs to 0
-            levels=[0.5, 1],                       # anything >0.5 is PFZ
-            colors=['#00ff00'],                    # green
-            alpha=0.6,                             # 60% transparent
+            lons, lats, pfz_smooth,
+            levels=np.linspace(0.3, 1.0, 6),
+            cmap='Greens',
+            alpha=0.6,
             transform=ccrs.PlateCarree(),
             zorder=4
         )
