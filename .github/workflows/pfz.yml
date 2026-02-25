@@ -2,8 +2,11 @@ name: Daily PFZ Map
 
 on:
   schedule:
-    - cron: "0 3 * * *"   # Runs daily at 03:00 UTC
-  workflow_dispatch:      # Allows you to click "Run" manually
+    - cron: "0 3 * * *"   # daily at 03:00 UTC
+  workflow_dispatch:      # allows manual run
+
+permissions:
+  contents: write         # FIX: This gives the bot permission to push the map back to your repo
 
 jobs:
   run-pfz:
@@ -31,10 +34,13 @@ jobs:
       run: |
         python scripts/pfz_pipeline.py
 
-    - name: Commit outputs
+    - name: Commit and Push outputs
       run: |
-        git config --global user.name "github-actions"
-        git config --global user.email "actions@github.com"
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        # Ensure outputs directory is tracked
+        mkdir -p outputs
+        touch outputs/.gitkeep
         git add outputs/
-        git commit -m "Auto-update PFZ map $(date)" || echo "No changes"
-        git push
+        git commit -m "Update PFZ map: $(date +'%Y-%m-%d')" || echo "No changes to commit"
+        git push origin main
