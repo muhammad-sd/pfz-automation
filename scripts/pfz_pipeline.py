@@ -81,6 +81,9 @@ def generate_pfz():
         #--------------------------------------------
 
         # Overlay PFZ as combined shapes
+
+        pfz_smooth = gaussian_filter(np.nan_to_num(pfz_mask), sigma=1.5)
+        levels = [0.35, pfz_smooth.max()]
         ax.contourf(
             lons, lats, pfz_smooth,
             levels=np.linspace(0.3, 1.0, 6),
