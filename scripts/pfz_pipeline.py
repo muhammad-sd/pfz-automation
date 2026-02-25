@@ -14,38 +14,41 @@ os.makedirs("outputs", exist_ok=True)
 LAT_MIN, LAT_MAX = 17, 23
 LON_MIN, LON_MAX = 88, 94
 
-# 3-day buffer to ensure NRT data is finalized
+# Use 3-day buffer
 target_dt = datetime.utcnow() - timedelta(days=3)
 target_date_str = target_dt.strftime("%Y-%m-%d")
 
-# CHANGED: Using a more stable NOAA CoastWatch ERDDAP link
-# This dataset is "OISST v2.1" which is very reliable for automation
+# Stable NOAA OISST URL
 SST_URL = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg_LonPM180"
 
 def generate_pfz():
     print(f"Starting pipeline for {target_date_str}...")
     
     try:
-        # 2. DATA ACQUISITION with specific engine and timeout
-        # Using decode_times=True to handle the netCDF time format automatically
+        # 2. DATA ACQUISITION
+        # Open dataset with netcdf4 engine
         ds = xr.open_dataset(SST_URL, engine='netcdf4')
         
         print("Fetching SST slice...")
+        # Select the time first, then slice coordinates
+        # We use slice() without method='nearest' for range selection
         subset = ds.sel(
             time=target_date_str, 
             latitude=slice(LAT_MIN, LAT_MAX), 
-            longitude=slice(LON_MIN, LON_MAX),
-            method='nearest'
+            longitude=slice(LON_MIN, LON_MAX)
         ).load()
 
         # 3. DATA PROCESSING
-        # OISST is in Celsius already, but check variable names
-        sst_vals = subset.sst.values[0] if len(subset.sst.shape) > 2 else subset.sst.values
+        # OISST sst variable usually has a 'zlev' (depth) dimension of size 1
+        # We squeeze() to remove any single-dimensional entries (time, zlev)
+        sst_vals = subset.sst.squeeze().values
+        lons = subset.longitude.values
+        lats = subset.latitude.values
         
-        # Smooth to identify significant fronts
+        # Smooth the data to find real oceanographic fronts
         sst_smoothed = gaussian_filter(sst_vals, sigma=1.2)
         
-        # Gradient Magnitude
+        # Calculate Gradient (Fronts)
         dy, dx = np.gradient(sst_smoothed)
         gradient_mag = np.sqrt(dx**2 + dy**2)
         
@@ -56,21 +59,25 @@ def generate_pfz():
         # 4. VISUALIZATION
         plt.figure(figsize=(10, 8))
         ax = plt.axes(projection=ccrs.PlateCarree())
-        ax.add_feature(cfeature.LAND, facecolor='#cc9966')
-        ax.add_feature(cfeature.COASTLINE)
         
-        # Background SST
-        mesh = ax.pcolormesh(subset.longitude, subset.latitude, sst_vals, 
+        # Add high-resolution features
+        ax.add_feature(cfeature.LAND, facecolor='#cc9966', zorder=2)
+        ax.add_feature(cfeature.COASTLINE, linewidth=1, zorder=3)
+        ax.add_feature(cfeature.BORDERS, linestyle=':', zorder=3)
+        
+        # Plot SST
+        # Use pcolormesh for proper coordinate alignment
+        mesh = ax.pcolormesh(lons, lats, sst_vals, 
                              cmap='RdYlBu_r', transform=ccrs.PlateCarree())
-        plt.colorbar(mesh, label="SST (°C)", shrink=0.5)
+        plt.colorbar(mesh, label="SST (°C)", shrink=0.5, pad=0.02)
 
-        # Overlay PFZ
+        # Overlay PFZ (Green points)
         y_idx, x_idx = np.where(pfz_mask == 1)
-        ax.scatter(subset.longitude[x_idx], subset.latitude[y_idx], 
-                   color='#00ff00', s=3, label='Potential Fishing Front', 
-                   transform=ccrs.PlateCarree())
+        ax.scatter(lons[x_idx], lats[y_idx], 
+                   color='#00ff00', s=5, label='Potential Fishing Front', 
+                   transform=ccrs.PlateCarree(), zorder=4)
 
-        plt.title(f"Potential Fishing Zones\n{target_date_str} | Bay of Bengal")
+        plt.title(f"Potential Fishing Zones (PFZ)\nDate: {target_date_str} | Region: Bay of Bengal", fontsize=12)
         plt.legend(loc='lower right')
 
         # 5. SAVE AND VERIFY
@@ -80,9 +87,11 @@ def generate_pfz():
         
         if os.path.exists(out_file):
             print(f"SUCCESS: Map saved to {out_file}")
-        
+            
     except Exception as e:
         print(f"Pipeline failed: {str(e)}")
+        # Re-raise error to make GitHub Action fail (RED)
+        raise e
 
 if __name__ == "__main__":
     generate_pfz()
