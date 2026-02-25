@@ -38,19 +38,26 @@ jobs:
           echo "Map generation failed!"
           exit 1
         fi
+    
     - name: Commit and Push outputs
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # 1. Pull latest changes first to ensure we are on the current version
+        # 1. Clear any local changes so the pull doesn't conflict
+        git reset --hard HEAD
+        
+        # 2. Pull the latest code
         git pull origin main --rebase
+        
+        # 3. Run the script AGAIN (to recreate the maps on top of the fresh pull)
+        # This ensures we are committing the maps to the most recent version of the repo
+        python scripts/pfz_pipeline.py
 
-        # 2. Add the new map files
+        # 4. Add and Commit
         mkdir -p outputs
         git add outputs/*.png
         
-        # 3. Only commit if there are actually new or changed maps
         if git diff --cached --quiet; then
           echo "No new map data to upload."
         else
