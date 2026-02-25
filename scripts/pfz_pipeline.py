@@ -14,45 +14,46 @@ os.makedirs("outputs", exist_ok=True)
 LAT_MIN, LAT_MAX = 17, 23
 LON_MIN, LON_MAX = 88, 94
 
-# Use 3-day buffer
-target_dt = datetime.utcnow() - timedelta(days=3)
-target_date_str = target_dt.strftime("%Y-%m-%d")
+# Use 4-day buffer to be safe (ERDDAP can be slow to update)
+target_dt = datetime.utcnow() - timedelta(days=4)
 
 # Stable NOAA OISST URL
 SST_URL = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg_LonPM180"
 
 def generate_pfz():
-    print(f"Starting pipeline for {target_date_str}...")
+    print(f"Targeting approximate date: {target_dt.strftime('%Y-%m-%d')}")
     
     try:
         # 2. DATA ACQUISITION
-        # Open dataset with netcdf4 engine
         ds = xr.open_dataset(SST_URL, engine='netcdf4')
         
-        print("Fetching SST slice...")
-        # Select the time first, then slice coordinates
-        # We use slice() without method='nearest' for range selection
-        subset = ds.sel(
-            time=target_date_str, 
+        print("Finding nearest time index...")
+        # Step A: Select the nearest time first
+        ds_time = ds.sel(time=target_dt, method='nearest')
+        actual_date = str(ds_time.time.values)[:10]
+        print(f"Actually using data from: {actual_date}")
+
+        # Step B: Slice the spatial area
+        print("Slicing spatial area...")
+        subset = ds_time.sel(
             latitude=slice(LAT_MIN, LAT_MAX), 
             longitude=slice(LON_MIN, LON_MAX)
         ).load()
 
         # 3. DATA PROCESSING
-        # OISST sst variable usually has a 'zlev' (depth) dimension of size 1
-        # We squeeze() to remove any single-dimensional entries (time, zlev)
+        # Squeeze removes extra dimensions (like 'zlev')
         sst_vals = subset.sst.squeeze().values
         lons = subset.longitude.values
         lats = subset.latitude.values
         
-        # Smooth the data to find real oceanographic fronts
+        # Smooth the data
         sst_smoothed = gaussian_filter(sst_vals, sigma=1.2)
         
         # Calculate Gradient (Fronts)
         dy, dx = np.gradient(sst_smoothed)
         gradient_mag = np.sqrt(dx**2 + dy**2)
         
-        # Identify PFZ (Top 10% gradients)
+        # PFZ Logic (Top 10% of gradients)
         threshold = np.nanpercentile(gradient_mag, 90)
         pfz_mask = np.where(gradient_mag > threshold, 1, np.nan)
 
@@ -60,37 +61,33 @@ def generate_pfz():
         plt.figure(figsize=(10, 8))
         ax = plt.axes(projection=ccrs.PlateCarree())
         
-        # Add high-resolution features
         ax.add_feature(cfeature.LAND, facecolor='#cc9966', zorder=2)
         ax.add_feature(cfeature.COASTLINE, linewidth=1, zorder=3)
-        ax.add_feature(cfeature.BORDERS, linestyle=':', zorder=3)
         
         # Plot SST
-        # Use pcolormesh for proper coordinate alignment
         mesh = ax.pcolormesh(lons, lats, sst_vals, 
                              cmap='RdYlBu_r', transform=ccrs.PlateCarree())
-        plt.colorbar(mesh, label="SST (°C)", shrink=0.5, pad=0.02)
+        plt.colorbar(mesh, label="SST (°C)", shrink=0.5)
 
-        # Overlay PFZ (Green points)
+        # Overlay PFZ
         y_idx, x_idx = np.where(pfz_mask == 1)
         ax.scatter(lons[x_idx], lats[y_idx], 
                    color='#00ff00', s=5, label='Potential Fishing Front', 
                    transform=ccrs.PlateCarree(), zorder=4)
 
-        plt.title(f"Potential Fishing Zones (PFZ)\nDate: {target_date_str} | Region: Bay of Bengal", fontsize=12)
+        plt.title(f"Potential Fishing Zones (PFZ)\nDate: {actual_date} | Bay of Bengal")
         plt.legend(loc='lower right')
 
-        # 5. SAVE AND VERIFY
+        # 5. SAVE
         out_file = "outputs/latest_pfz.png"
         plt.savefig(out_file, dpi=300, bbox_inches='tight')
-        plt.savefig(f"outputs/pfz_{target_date_str}.png", dpi=150)
+        plt.savefig(f"outputs/pfz_{actual_date}.png", dpi=150)
         
         if os.path.exists(out_file):
-            print(f"SUCCESS: Map saved to {out_file}")
+            print(f"SUCCESS: Map saved for {actual_date}")
             
     except Exception as e:
         print(f"Pipeline failed: {str(e)}")
-        # Re-raise error to make GitHub Action fail (RED)
         raise e
 
 if __name__ == "__main__":
