@@ -12,7 +12,7 @@ os.makedirs("outputs", exist_ok=True)
 
 # Define Area: Bay of Bengal
 LAT_MIN, LAT_MAX = 15, 24
-LON_MIN, LON_MAX = 85, 94
+LON_MIN, LON_MAX = 85.5, 94
 
 # Use 4-day buffer to be safe (ERDDAP can be slow to update)
 target_dt = datetime.utcnow() - timedelta(days=4)
@@ -69,14 +69,26 @@ def generate_pfz():
                              cmap='RdYlBu_r', transform=ccrs.PlateCarree())
         plt.colorbar(mesh, label="SST (°C)", shrink=0.5)
 
-        # Overlay PFZ
-        y_idx, x_idx = np.where(pfz_mask == 1)
-        ax.scatter(lons[x_idx], lats[y_idx], 
-                   color='#00ff00', s=100,alpha=0.6, label='Potential Fishing Area', 
-                   transform=ccrs.PlateCarree(), zorder=4)
+        #------------------------------------
+        # # Overlay PFZ
+        # y_idx, x_idx = np.where(pfz_mask == 1)
+        # ax.scatter(lons[x_idx], lats[y_idx], 
+        #            color='#00ff00', s=100,alpha=0.6, label='Potential Fishing Area', 
+        #            transform=ccrs.PlateCarree(), zorder=4)
 
-        plt.title(f"Potential Fishing Zones (PFZ)\nDate: {actual_date} | Bay of Bengal")
-        plt.legend(loc='upper left')
+        # plt.title(f"Potential Fishing Zones (PFZ)\nDate: {actual_date} | Bay of Bengal")
+        # plt.legend(loc='upper left')
+        #--------------------------------------------
+
+        # Overlay PFZ as combined shapes
+        ax.contourf(
+            lons, lats, np.nan_to_num(pfz_mask),  # convert NaNs to 0
+            levels=[0.5, 1],                       # anything >0.5 is PFZ
+            colors=['#00ff00'],                    # green
+            alpha=0.6,                             # 60% transparent
+            transform=ccrs.PlateCarree(),
+            zorder=4
+        )
 
         # 5. SAVE
         out_file = "outputs/latest_pfz.png"
