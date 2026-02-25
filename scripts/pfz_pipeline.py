@@ -88,7 +88,7 @@ def generate_pfz():
             lons, lats, pfz_smooth,
             levels=np.linspace(0.3, 1.0, 6),
             cmap='Greens',
-            alpha=0.6,
+            alpha=0.8,
             transform=ccrs.PlateCarree(),
             zorder=4
         )
