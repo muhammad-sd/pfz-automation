@@ -38,9 +38,18 @@ jobs:
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
         # Ensure outputs directory is tracked
         mkdir -p outputs
         touch outputs/.gitkeep
+        
         git add outputs/
+        
+        # Pull latest changes from the repo to avoid "rejected" error
+        git pull --rebase origin main
+        
+        # Commit only if there are changes
         git commit -m "Update PFZ map: $(date +'%Y-%m-%d')" || echo "No changes to commit"
+        
+        # Push the changes
         git push origin main
