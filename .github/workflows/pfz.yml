@@ -33,7 +33,11 @@ jobs:
     - name: Run PFZ pipeline
       run: |
         python scripts/pfz_pipeline.py
-
+        # This checks if the file was actually made. If not, the workflow will show a RED error.
+        if [ ! -f outputs/latest_pfz.png ]; then
+          echo "Map generation failed!"
+          exit 1
+        fi
     - name: Commit and Push outputs
       run: |
         git config --global user.name "github-actions[bot]"
