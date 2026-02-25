@@ -43,17 +43,17 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Ensure outputs directory is tracked
+        # 1. Pull latest changes first to ensure we are on the current version
+        git pull origin main --rebase
+
+        # 2. Add the new map files
         mkdir -p outputs
-        touch outputs/.gitkeep
+        git add outputs/*.png
         
-        git add outputs/
-        
-        # Pull latest changes from the repo to avoid "rejected" error
-        git pull --rebase origin main
-        
-        # Commit only if there are changes
-        git commit -m "Update PFZ map: $(date +'%Y-%m-%d')" || echo "No changes to commit"
-        
-        # Push the changes
-        git push origin main
+        # 3. Only commit if there are actually new or changed maps
+        if git diff --cached --quiet; then
+          echo "No new map data to upload."
+        else
+          git commit -m "Auto-update PFZ map: $(date +'%Y-%m-%d')"
+          git push origin main
+        fi
