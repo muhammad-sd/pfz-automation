@@ -1,12 +1,12 @@
-name: Daily PFZ Map
+name: Daily Interactive PFZ Map
 
 on:
   schedule:
     - cron: "0 3 * * *"   # daily at 03:00 UTC
-  workflow_dispatch:      # allows manual run
+  workflow_dispatch:      
 
 permissions:
-  contents: write         # FIX: This gives the bot permission to push the map back to your repo
+  contents: write         
 
 jobs:
   run-pfz:
@@ -28,14 +28,14 @@ jobs:
 
     - name: Install Python dependencies
       run: |
-        pip install xarray netCDF4 numpy matplotlib cartopy scipy dask h5netcdf
+        # Added folium and branca for interactive mapping
+        pip install xarray netCDF4 numpy matplotlib scipy dask h5netcdf folium branca
 
     - name: Run PFZ pipeline
       run: |
         python scripts/pfz_pipeline.py
-        # This checks if the file was actually made. If not, the workflow will show a RED error.
-        if [ ! -f outputs/latest_pfz.png ]; then
-          echo "Map generation failed!"
+        if [ ! -f outputs/index.html ]; then
+          echo "HTML Map generation failed!"
           exit 1
         fi
     
@@ -44,23 +44,19 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # 1. Clear any local changes so the pull doesn't conflict
         git reset --hard HEAD
-        
-        # 2. Pull the latest code
         git pull origin main --rebase
         
-        # 3. Run the script AGAIN (to recreate the maps on top of the fresh pull)
-        # This ensures we are committing the maps to the most recent version of the repo
+        # Regenerate the interactive map
         python scripts/pfz_pipeline.py
 
-        # 4. Add and Commit
         mkdir -p outputs
-        git add outputs/*.png
+        # Track both the PNG for archive and HTML for the live site
+        git add outputs/*.png outputs/*.html
         
         if git diff --cached --quiet; then
           echo "No new map data to upload."
         else
-          git commit -m "Auto-update PFZ map: $(date +'%Y-%m-%d')"
+          git commit -m "Auto-update Interactive PFZ map: $(date +'%Y-%m-%d')"
           git push origin main
         fi
