@@ -17,12 +17,10 @@ LON_MIN, LON_MAX = 85.5, 94
 DATASET_ID = "ncdcOisst21Agg_LonPM180"
 BASE_URL = f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/{DATASET_ID}"
 
-def hex_to_rgba(hex_str, alpha=1.0):
-    """Safely converts hex strings (including 8-char RGBA hex) to float tuples"""
+def hex_to_rgba(hex_str, alpha=0.6):
+    """Safely converts hex strings to float tuples (R, G, B, A)"""
     hex_str = hex_str.lstrip('#')
-    # If branca returns RGBA hex (8 chars), we just take the first 6
-    if len(hex_str) == 8:
-        hex_str = hex_str[:6]
+    if len(hex_str) == 8: hex_str = hex_str[:6] # Clip alpha if present
     r, g, b = tuple(int(hex_str[i:i+2], 16) / 255.0 for i in (0, 2, 4))
     return (r, g, b, alpha)
 
@@ -45,16 +43,16 @@ def generate_interactive_map():
         with open(sst_file, 'wb') as f:
             f.write(response.content)
 
-        # 4. PROCESS
+        # 4. PROCESS DATA
         ds_sst = xr.open_dataset(sst_file)
-        # Handle potential empty dimensions and fill NaNs for the colormap math
         sst_vals = ds_sst.sst.squeeze().values
-        # Replace NaNs with the mean so the colormap doesn't break
-        sst_filled = np.nan_to_num(sst_vals, nan=np.nanmean(sst_vals))
-        
         lats, lons = ds_sst.latitude.values, ds_sst.longitude.values
         
-        # PFZ Calculation
+        # Clean data for PFZ calculation: replace NaNs with mean to avoid gradient errors
+        mean_sst = np.nanmean(sst_vals)
+        sst_filled = np.nan_to_num(sst_vals, nan=mean_sst)
+        
+        # PFZ Calculation (Fronts)
         sst_smoothed = gaussian_filter(sst_filled, sigma=1.2)
         dy, dx = np.gradient(sst_smoothed)
         grad_mag = np.sqrt(dx**2 + dy**2)
@@ -65,43 +63,54 @@ def generate_interactive_map():
         # 5. INITIALIZE MAP
         m = folium.Map(location=[19.5, 89.5], zoom_start=6, tiles='CartoDB dark_matter')
 
-        # FIXED COLORMAP: Use StepColormap or Linear with explicit boundaries
-        vmin, vmax = float(np.nanmin(sst_vals)), float(np.nanmax(sst_vals))
-        # Ensure vmin and vmax are not identical to prevent sorting errors
-        if vmin == vmax:
-            vmin -= 1
-            vmax += 1
-
-        sst_colormap = cm.LinearColormap(
-            colors=['#000044', '#0044ff', '#00ffff', '#ffff00', '#ff4400', '#ff0000'],
-            index=np.linspace(vmin, vmax, 6), # Explicitly sorted thresholds
-            vmin=vmin, vmax=vmax,
-            caption=f"SST (°C) - {actual_date_only}"
-        )
+        # 6. STABLE COLORMAP LOGIC
+        # We manually define 6 steps to ensure 'branca' never sees an unsorted list
+        vmin = floor_val = np.floor(np.nanmin(sst_vals))
+        vmax = ceil_val = np.ceil(np.nanmax(sst_vals))
         
+        # If range is zero (bad data), create dummy range
+        if vmin >= vmax:
+            vmin, vmax = 20, 30
+            
+        colors = ['#000044', '#0044ff', '#00ffff', '#ffff00', '#ff4400', '#ff0000']
+        sst_colormap = cm.LinearColormap(
+            colors=colors,
+            vmin=vmin,
+            vmax=vmax
+        ).to_step(n=12) # Use more steps for smoothness but keeps it discrete/stable
+        
+        sst_colormap.caption = f"SST (°C) - {actual_date_only}"
+
+        # 7. ADD SST LAYER
+        # We use a lambda that handles NaNs by returning a transparent color
+        def color_logic(x):
+            if np.isnan(x): return (0,0,0,0) # Transparent for land/NaN
+            return hex_to_rgba(sst_colormap(x))
+
         raster_layers.ImageOverlay(
             image=np.flipud(sst_vals),
             bounds=[[LAT_MIN, LON_MIN], [LAT_MAX, LON_MAX]],
-            opacity=0.5,
+            opacity=0.7,
             name="Sea Surface Temperature",
-            colormap=lambda x: hex_to_rgba(sst_colormap(x), alpha=0.6)
+            colormap=color_logic
         ).add_to(m)
+        
         m.add_child(sst_colormap)
 
-        # 6. PFZ Heatmap
+        # 8. ADD PFZ HEATMAP
         pfz_data = []
         for i in range(0, len(lats), 2):
             for j in range(0, len(lons), 2):
-                if pfz_smooth[i, j] > 0.4:
+                if pfz_smooth[i, j] > 0.35:
                     pfz_data.append([lats[i], lons[j], float(pfz_smooth[i, j])])
         
-        plugins.HeatMap(pfz_data, name="Fishing Hotspots (PFZ)", min_opacity=0.4, 
-                        radius=12, blur=8, 
-                        gradient={0.4: 'blue', 0.7: 'lime', 1: 'white'}).add_to(m)
+        plugins.HeatMap(pfz_data, name="Fishing Hotspots (PFZ)", 
+                        min_opacity=0.4, radius=10, blur=8, 
+                        gradient={0.4: 'blue', 0.6: 'lime', 1: 'white'}).add_to(m)
 
+        # 9. EXTRAS
         folium.LayerControl().add_to(m)
         plugins.Fullscreen().add_to(m)
-        
         m.save("outputs/index.html")
         print(f"SUCCESS: Interactive map created for {actual_date_only}")
 
