@@ -17,7 +17,7 @@ SMOOTH_FACTOR = 4
 DATASET_ID = "ncdcOisst21Agg_LonPM180"
 BASE_URL = f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/{DATASET_ID}"
 
-def hex_to_rgba(hex_str, alpha=0.6): # Reduced alpha slightly to see satellite better
+def hex_to_rgba(hex_str, alpha=0.5): # Slightly more transparent for better satellite visibility
     hex_str = hex_str.lstrip('#')
     if len(hex_str) == 8: hex_str = hex_str[:6]
     r, g, b = tuple(int(hex_str[i:i+2], 16) / 255.0 for i in (0, 2, 4))
@@ -35,7 +35,7 @@ def generate_interactive_map():
         response = requests.get(download_url, timeout=120)
         with open(sst_file, 'wb') as f: f.write(response.content)
 
-        # 3. ADVANCED PROCESSING
+        # 3. PROCESSING
         ds = xr.open_dataset(sst_file)
         raw_sst = ds.sst.squeeze().values
         raw_lats, raw_lons = ds.latitude.values, ds.longitude.values
@@ -46,6 +46,7 @@ def generate_interactive_map():
         grid_lon, grid_lat = np.meshgrid(fine_lons, fine_lats)
         sst_vals = interp((grid_lat, grid_lon))
 
+        # Gradient calculation for PFZ
         sst_filled = np.nan_to_num(sst_vals, nan=np.nanmean(sst_vals))
         sst_smoothed = gaussian_filter(sst_filled, sigma=2.0)
         dy, dx = np.gradient(sst_smoothed)
@@ -53,8 +54,7 @@ def generate_interactive_map():
         
         sst_masked = np.where(np.isnan(sst_vals), np.nan, sst_vals)
 
-        # 4. MAP SETUP (CHANGED TILES HERE)
-        # Using Google Satellite tiles
+        # 4. MAP SETUP
         m = folium.Map(
             location=[19.5, 89.5], 
             zoom_start=6, 
@@ -62,20 +62,13 @@ def generate_interactive_map():
             attr='Google Satellite'
         )
 
-        # Add a standard street view option in Layer Control
-        folium.TileLayer(
-            tiles='https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
-            attr='Google Maps',
-            name='Google Road Map'
-        ).add_to(m)
-
         vmin, vmax = np.nanmin(raw_sst), np.nanmax(raw_sst)
         sst_colormap = cm.LinearColormap(
             colors=['#000044', '#0044ff', '#00ffff', '#ffff00', '#ff4400', '#ff0000'],
             vmin=vmin, vmax=vmax
         ).to_step(n=15)
 
-        # 5. LAYERS
+        # 5. SST LAYER
         def color_logic(x):
             if np.isnan(x): return (0, 0, 0, 0) 
             return hex_to_rgba(sst_colormap(x))
@@ -83,35 +76,41 @@ def generate_interactive_map():
         raster_layers.ImageOverlay(
             image=np.flipud(sst_masked),
             bounds=[[LAT_MIN, LON_MIN], [LAT_MAX, LON_MAX]],
-            name="SST Temperature Overlay",
+            name="SST Gradient",
             colormap=color_logic,
-            show=True # SST is visible by default
+            show=True
         ).add_to(m)
 
-        # 6. PFZ POINTS
-        pfz_points = []
+        # 6. PFZ ZONES (HeatMap creates the "Polygon/Glow" effect)
+        pfz_data = []
         threshold = np.nanpercentile(grad_mag, 92)
-        for i in range(0, len(fine_lats), 4):
-            for j in range(0, len(fine_lons), 4):
+        
+        # We normalize the gradient magnitude to use as weight for the heatmap
+        max_grad = np.nanmax(grad_mag)
+        
+        for i in range(0, len(fine_lats), 2): # Sampling every 2nd for density
+            for j in range(0, len(fine_lons), 2):
                 if grad_mag[i,j] > threshold and not np.isnan(sst_vals[i,j]):
-                    pfz_points.append([fine_lats[i], fine_lons[j]])
+                    # weight is based on how strong the front is
+                    weight = (grad_mag[i,j] / max_grad) 
+                    pfz_data.append([fine_lats[i], fine_lons[j], weight])
 
-        pfz_group = folium.FeatureGroup(name="Potential Fishing Fronts")
-        for pt in pfz_points:
-            folium.CircleMarker(
-                pt, 
-                radius=1.5, 
-                color='#00ff00', 
-                fill=True, 
-                fill_color='#00ff00', 
-                fill_opacity=0.8
-            ).add_to(pfz_group)
-        pfz_group.add_to(m)
+        # HeatMap settings for a "Connected Zone" look:
+        # radius: how far the color spreads from each point
+        # blur: how much the edges soften
+        plugins.HeatMap(
+            data=pfz_data,
+            name="Potential Fishing Zones",
+            radius=15, 
+            blur=10,
+            min_opacity=0.4,
+            gradient={0.4: '#0000ff', 0.6: '#00ff00', 0.9: '#ffffff'} # Blue -> Green -> White centers
+        ).add_to(m)
 
         m.add_child(sst_colormap)
         folium.LayerControl().add_to(m)
         m.save("outputs/index.html")
-        print("SUCCESS: Satellite map with SST overlay saved.")
+        print("SUCCESS: High-res Zone map saved.")
 
     except Exception as e:
         print(f"Failed: {e}")
