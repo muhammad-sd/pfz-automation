@@ -7,6 +7,7 @@ import branca.colormap as cm
 from scipy.ndimage import gaussian_filter
 from scipy.interpolate import RegularGridInterpolator
 import requests
+import cv2  # You may need to add 'opencv-python' to your requirements.txt
 
 # 1. SETUP
 os.makedirs("outputs", exist_ok=True)
@@ -17,7 +18,7 @@ SMOOTH_FACTOR = 4
 DATASET_ID = "ncdcOisst21Agg_LonPM180"
 BASE_URL = f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/{DATASET_ID}"
 
-def hex_to_rgba(hex_str, alpha=0.5): # Slightly more transparent for better satellite visibility
+def hex_to_rgba(hex_str, alpha=0.5):
     hex_str = hex_str.lstrip('#')
     if len(hex_str) == 8: hex_str = hex_str[:6]
     r, g, b = tuple(int(hex_str[i:i+2], 16) / 255.0 for i in (0, 2, 4))
@@ -30,7 +31,6 @@ def generate_interactive_map():
         ds_meta = xr.open_dataset(BASE_URL, engine='netcdf4')
         latest_time = ds_meta.time.values[-1]
         time_str = np.datetime_as_string(latest_time, unit='s') + "Z"
-        
         download_url = f"{BASE_URL}.nc?sst[({time_str})][(0.0)][({LAT_MIN}):({LAT_MAX})][({LON_MIN}):({LON_MAX})]"
         response = requests.get(download_url, timeout=120)
         with open(sst_file, 'wb') as f: f.write(response.content)
@@ -46,15 +46,21 @@ def generate_interactive_map():
         grid_lon, grid_lat = np.meshgrid(fine_lons, fine_lats)
         sst_vals = interp((grid_lat, grid_lon))
 
-        # Gradient calculation for PFZ
+        # Gradient logic
         sst_filled = np.nan_to_num(sst_vals, nan=np.nanmean(sst_vals))
-        sst_smoothed = gaussian_filter(sst_filled, sigma=2.0)
+        sst_smoothed = gaussian_filter(sst_filled, sigma=1.5)
         dy, dx = np.gradient(sst_smoothed)
         grad_mag = np.sqrt(dx**2 + dy**2)
         
-        sst_masked = np.where(np.isnan(sst_vals), np.nan, sst_vals)
+        # 4. POLYGON GENERATION (The new part)
+        # Create a binary mask of high-gradient areas
+        threshold = np.nanpercentile(grad_mag, 92)
+        mask = (grad_mag > threshold).astype(np.uint8)
+        
+        # Find contours using OpenCV
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # 4. MAP SETUP
+        # 5. MAP SETUP
         m = folium.Map(
             location=[19.5, 89.5], 
             zoom_start=6, 
@@ -62,55 +68,53 @@ def generate_interactive_map():
             attr='Google Satellite'
         )
 
+        # SST Layer
         vmin, vmax = np.nanmin(raw_sst), np.nanmax(raw_sst)
         sst_colormap = cm.LinearColormap(
             colors=['#000044', '#0044ff', '#00ffff', '#ffff00', '#ff4400', '#ff0000'],
             vmin=vmin, vmax=vmax
         ).to_step(n=15)
 
-        # 5. SST LAYER
         def color_logic(x):
             if np.isnan(x): return (0, 0, 0, 0) 
-            return hex_to_rgba(sst_colormap(x))
+            return hex_to_rgba(sst_colormap(x), alpha=0.4)
 
         raster_layers.ImageOverlay(
-            image=np.flipud(sst_masked),
+            image=np.flipud(np.where(np.isnan(sst_vals), np.nan, sst_vals)),
             bounds=[[LAT_MIN, LON_MIN], [LAT_MAX, LON_MAX]],
             name="SST Gradient",
-            colormap=color_logic,
-            show=True
+            colormap=color_logic
         ).add_to(m)
 
-        # 6. PFZ ZONES (HeatMap creates the "Polygon/Glow" effect)
-        pfz_data = []
-        threshold = np.nanpercentile(grad_mag, 92)
+        # 6. DRAW SOLID POLYGONS
+        pfz_group = folium.FeatureGroup(name="Solid Fishing Zones")
+        for cnt in contours:
+            if cv2.contourArea(cnt) < 5: continue # Skip tiny noise spots
+            
+            # Convert pixel coordinates back to Lat/Lon
+            poly_points = []
+            for point in cnt:
+                px_x, px_y = point[0]
+                lat = fine_lats[px_y]
+                lon = fine_lons[px_x]
+                poly_points.append([lat, lon])
+            
+            # Create a solid polygon
+            folium.Polygon(
+                locations=poly_points,
+                color="#00FF00",
+                weight=2,
+                fill=True,
+                fill_color="#00FF00",
+                fill_opacity=0.5,
+                tooltip="Potential Fishing Zone"
+            ).add_to(pfz_group)
         
-        # We normalize the gradient magnitude to use as weight for the heatmap
-        max_grad = np.nanmax(grad_mag)
-        
-        for i in range(0, len(fine_lats), 2): # Sampling every 2nd for density
-            for j in range(0, len(fine_lons), 2):
-                if grad_mag[i,j] > threshold and not np.isnan(sst_vals[i,j]):
-                    # weight is based on how strong the front is
-                    weight = (grad_mag[i,j] / max_grad) 
-                    pfz_data.append([fine_lats[i], fine_lons[j], weight])
-
-        # HeatMap settings for a "Connected Zone" look:
-        # radius: how far the color spreads from each point
-        # blur: how much the edges soften
-        plugins.HeatMap(
-            data=pfz_data,
-            name="Potential Fishing Zones",
-            radius=15, 
-            blur=10,
-            min_opacity=0.4,
-            gradient={0.4: '#0000ff', 0.6: '#00ff00', 0.9: '#ffffff'} # Blue -> Green -> White centers
-        ).add_to(m)
-
+        pfz_group.add_to(m)
         m.add_child(sst_colormap)
         folium.LayerControl().add_to(m)
         m.save("outputs/index.html")
-        print("SUCCESS: High-res Zone map saved.")
+        print(f"SUCCESS: Map with {len(contours)} solid polygons saved.")
 
     except Exception as e:
         print(f"Failed: {e}")
