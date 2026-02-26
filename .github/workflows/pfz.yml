@@ -29,7 +29,7 @@ jobs:
     - name: Install Python dependencies
       run: |
         # Added folium and branca for interactive mapping
-        pip install xarray netCDF4 numpy matplotlib scipy dask h5netcdf folium branca
+        pip install xarray netCDF4 numpy matplotlib scipy dask h5netcdf folium branca requests
 
     - name: Run PFZ pipeline
       run: |
