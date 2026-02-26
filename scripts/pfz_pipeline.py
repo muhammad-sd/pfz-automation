@@ -1,109 +1,120 @@
 import os
 import xarray as xr
 import numpy as np
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
+import folium
+from folium import plugins
+import branca.colormap as cm
 from scipy.ndimage import gaussian_filter
 from datetime import datetime, timedelta
 
-# 1. DIRECTORY SETUP
+# 1. SETUP
 os.makedirs("outputs", exist_ok=True)
-
-# Define Area: Bay of Bengal
 LAT_MIN, LAT_MAX = 14, 25
 LON_MIN, LON_MAX = 85.5, 94
 
-# Use 4-day buffer to be safe (ERDDAP can be slow to update)
 target_dt = datetime.utcnow() - timedelta(days=4)
 
-# Stable NOAA OISST URL
+# Data URLs
 SST_URL = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg_LonPM180"
+# OSCAR Surface Currents (standard for surface flow)
+CURRENTS_URL = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/oscar_currents_interim"
 
-def generate_pfz():
-    print(f"Targeting approximate date: {target_dt.strftime('%Y-%m-%d')}")
-    
+def generate_interactive_map():
     try:
-        # 2. DATA ACQUISITION
-        ds = xr.open_dataset(SST_URL, engine='netcdf4')
-        
-        print("Finding nearest time index...")
-        # Step A: Select the nearest time first
-        ds_time = ds.sel(time=target_dt, method='nearest')
-        actual_date = str(ds_time.time.values)[:10]
-        print(f"Actually using data from: {actual_date}")
-
-        # Step B: Slice the spatial area
-        print("Slicing spatial area...")
-        subset = ds_time.sel(
+        # 2. FETCH SST DATA
+        ds_sst = xr.open_dataset(SST_URL, engine='netcdf4')
+        subset_sst = ds_sst.sel(time=target_dt, method='nearest').sel(
             latitude=slice(LAT_MIN, LAT_MAX), 
             longitude=slice(LON_MIN, LON_MAX)
         ).load()
-
-        # 3. DATA PROCESSING
-        # Squeeze removes extra dimensions (like 'zlev')
-        sst_vals = subset.sst.squeeze().values
-        lons = subset.longitude.values
-        lats = subset.latitude.values
         
-        # Smooth the data
+        actual_date = str(subset_sst.time.values)[:10]
+        sst_vals = subset_sst.sst.squeeze().values
+        
+        # 3. CALCULATE PFZ (Using your contour logic)
         sst_smoothed = gaussian_filter(sst_vals, sigma=1.2)
-        
-        # Calculate Gradient (Fronts)
         dy, dx = np.gradient(sst_smoothed)
-        gradient_mag = np.sqrt(dx**2 + dy**2)
-        
-        # PFZ Logic (Top 10% of gradients)
-        threshold = np.nanpercentile(gradient_mag, 90)
-        pfz_mask = np.where(gradient_mag > threshold, 1, np.nan)
+        grad_mag = np.sqrt(dx**2 + dy**2)
+        threshold = np.nanpercentile(grad_mag, 90)
+        pfz_mask = np.where(grad_mag > threshold, 1.0, 0.0)
+        pfz_smooth = gaussian_filter(pfz_mask, sigma=1.5)
 
-        # 4. VISUALIZATION
-        plt.figure(figsize=(10, 8))
-        ax = plt.axes(projection=ccrs.PlateCarree())
-        
-        ax.add_feature(cfeature.LAND, facecolor='#cc9966', zorder=2)
-        ax.add_feature(cfeature.COASTLINE, linewidth=1, zorder=3)
-        
-        # Plot SST
-        mesh = ax.pcolormesh(lons, lats, sst_vals, 
-                             cmap='RdYlBu_r', transform=ccrs.PlateCarree())
-        plt.colorbar(mesh, label="SST (°C)", shrink=0.5)
+        # 4. FETCH CURRENT VECTORS (Simplified Windy Effect)
+        # Note: Currents often have lower resolution than SST
+        try:
+            ds_curr = xr.open_dataset(CURRENTS_URL, engine='netcdf4')
+            subset_curr = ds_curr.sel(time=target_dt, method='nearest').sel(
+                latitude=slice(LAT_MIN, LAT_MAX), 
+                longitude=slice(LON_MIN, LON_MAX)
+            ).load()
+            u_curr = subset_curr.u.squeeze().values
+            v_curr = subset_curr.v.squeeze().values
+        except Exception as e:
+            print(f"Currents data unavailable: {e}")
+            u_curr, v_curr = None, None
 
-        #------------------------------------
-        # # Overlay PFZ
-        # y_idx, x_idx = np.where(pfz_mask == 1)
-        # ax.scatter(lons[x_idx], lats[y_idx], 
-        #            color='#00ff00', s=100,alpha=0.6, label='Potential Fishing Area', 
-        #            transform=ccrs.PlateCarree(), zorder=4)
+        # 5. INITIALIZE FOLIUM MAP
+        m = folium.Map(location=[19.5, 89.5], zoom_start=6, tiles='CartoDB dark_matter')
 
-        # plt.title(f"Potential Fishing Zones (PFZ)\nDate: {actual_date} | Bay of Bengal")
-        # plt.legend(loc='upper left')
-        #--------------------------------------------
-
-        # Overlay PFZ as combined shapes
-
-        pfz_smooth = gaussian_filter(np.nan_to_num(pfz_mask), sigma=1.5)
-        levels = [0.35, pfz_smooth.max()]
-        ax.contourf(
-            lons, lats, pfz_smooth,
-            levels=np.linspace(0.3, 1.0, 6),
-            cmap='Greens',
-            alpha=0.8,
-            transform=ccrs.PlateCarree(),
-            zorder=4
+        # SST Heatmap Layer
+        sst_colormap = cm.LinearColormap(
+            colors=['#000044', '#0044ff', '#00ffff', '#ffff00', '#ff4400', '#ff0000'],
+            vmin=np.nanmin(sst_vals), vmax=np.nanmax(sst_vals),
+            caption=f"SST (°C) - {actual_date}"
         )
-
-        # 5. SAVE
-        out_file = "outputs/latest_pfz.png"
-        plt.savefig(out_file, dpi=300, bbox_inches='tight')
-        plt.savefig(f"outputs/pfz_{actual_date}.png", dpi=150)
         
-        if os.path.exists(out_file):
-            print(f"SUCCESS: Map saved for {actual_date}")
-            
+        # ImageOverlay for smooth SST transition
+        plugins.ImageOverlay(
+            image=np.flipud(sst_vals),
+            bounds=[[LAT_MIN, LON_MIN], [LAT_MAX, LON_MAX]],
+            opacity=0.5,
+            name="Sea Surface Temperature",
+            interactive=True
+        ).add_to(m)
+        m.add_child(sst_colormap)
+
+        # PFZ Overlay (Contour-like blobs)
+        # For simplicity in Folium, we use the smoothed mask as a localized heatmap
+        pfz_data = []
+        lats = subset_sst.latitude.values
+        lons = subset_sst.longitude.values
+        for i in range(0, len(lats), 2): # Stepping for performance
+            for j in range(0, len(lons), 2):
+                if pfz_smooth[i, j] > 0.4:
+                    pfz_data.append([lats[i], lons[j], pfz_smooth[i, j]])
+
+        plugins.HeatMap(pfz_data, name="Fishing Hotspots", min_opacity=0.5, 
+                        radius=15, blur=10, gradient={0.4: 'blue', 0.65: 'lime', 1: 'white'}).add_to(m)
+
+        # 6. ADD CURRENT VECTORS (Arrows)
+        if u_curr is not None:
+            curr_group = folium.FeatureGroup(name="Surface Currents")
+            # We sample the grid so the map isn't crowded
+            step = 3 
+            c_lats = subset_curr.latitude.values
+            c_lons = subset_curr.longitude.values
+            for i in range(0, len(c_lats), step):
+                for j in range(0, len(c_lons), step):
+                    u, v = u_curr[i, j], v_curr[i, j]
+                    if not np.isnan(u) and not np.isnan(v):
+                        mag = np.sqrt(u**2 + v**2)
+                        if mag > 0.1: # Only draw moving water
+                            folium.PolyLine(
+                                locations=[[c_lats[i], c_lons[j]], 
+                                           [c_lats[i] + v*0.5, c_lons[j] + u*0.5]],
+                                color='white', weight=1, opacity=0.6
+                            ).add_to(curr_group)
+            curr_group.add_to(m)
+
+        # 7. EXTRAS & SAVE
+        folium.LayerControl().add_to(m)
+        plugins.Fullscreen().add_to(m)
+        m.save("outputs/index.html")
+        print("SUCCESS: Interactive map created.")
+
     except Exception as e:
-        print(f"Pipeline failed: {str(e)}")
+        print(f"Failed: {e}")
         raise e
 
 if __name__ == "__main__":
-    generate_pfz()
+    generate_interactive_map()
