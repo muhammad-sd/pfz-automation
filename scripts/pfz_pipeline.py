@@ -113,7 +113,10 @@ def generate_interactive_map():
         pfz_group.add_to(m)
         m.add_child(sst_colormap)
         folium.LayerControl().add_to(m)
-        m.save("outputs/index.html")
+
+        date_for_filename = actual_date_only.replace("-", "_") # Optional: uses underscores
+        filename = f"outputs/index_{actual_date_only}.html"
+        m.save(filename )
         print(f"SUCCESS: Map with {len(contours)} solid polygons saved.")
 
     except Exception as e:
