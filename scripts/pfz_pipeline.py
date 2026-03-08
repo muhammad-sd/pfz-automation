@@ -114,10 +114,13 @@ def generate_interactive_map():
         m.add_child(sst_colormap)
         folium.LayerControl().add_to(m)
 
-        date_for_filename = actual_date_only.replace("-", "_") # Optional: uses underscores
-        filename = f"outputs/index_{actual_date_only}.html"
-        m.save(filename )
-        print(f"SUCCESS: Map with {len(contours)} solid polygons saved.")
+        actual_date_only = np.datetime_as_string(latest_time, unit='D')
+        dated_filename = f"outputs/index_{actual_date_only}.html"
+        m.save(dated_filename)
+        # Save as index.html for your live website
+        m.save("outputs/index.html")
+        
+        print(f"SUCCESS: Saved {dated_filename} and index.html")
 
     except Exception as e:
         print(f"Failed: {e}")
