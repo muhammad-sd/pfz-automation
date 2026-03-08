@@ -33,30 +33,24 @@ jobs:
 
     - name: Run PFZ pipeline
       run: |
+        # Run the script once to generate all files
         python scripts/pfz_pipeline.py
-        if [ ! -f outputs/index.html ]; then
-          echo "HTML Map generation failed!"
-          exit 1
-        fi
     
     - name: Commit and Push outputs
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        git reset --hard HEAD
+        # Pull latest changes to avoid conflicts
         git pull origin main --rebase
         
-        # Regenerate the interactive map
-        python scripts/pfz_pipeline.py
-
-        mkdir -p outputs
-        # Track both the PNG for archive and HTML for the live site
-        git add outputs/*.png outputs/*.html
+        # Add everything inside the outputs folder
+        git add outputs/
         
+        # Check if there are changes before committing
         if git diff --cached --quiet; then
           echo "No new map data to upload."
         else
-          git commit -m "Auto-update Interactive PFZ map: $(date +'%Y-%m-%d')"
+          git commit -m "Auto-update PFZ maps: $(date +'%Y-%m-%d')"
           git push origin main
         fi
