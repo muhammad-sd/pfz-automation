@@ -31,23 +31,25 @@ jobs:
         # Added folium and branca for interactive mapping
         pip install xarray numpy folium branca scipy requests netCDF4 opencv-python-headless
 
-    - name: Run PFZ pipeline
+    - name: Prepare and Run Pipeline
       run: |
-        # Run the script once to generate all files
-        python scripts/pfz_pipeline.py
-    
-    - name: Commit and Push outputs
-      run: |
+        # 1. Setup Git Identity
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Pull latest changes to avoid conflicts
+        # 2. Pull the latest changes BEFORE running the script
+        # This prevents the "unstaged changes" error
         git pull origin main --rebase
         
-        # Add everything inside the outputs folder
+        # 3. Now run the script to generate new files
+        python scripts/pfz_pipeline.py
+
+    - name: Commit and Push outputs
+      run: |
+        # 4. Add the new files
         git add outputs/
         
-        # Check if there are changes before committing
+        # 5. Check if there are actual changes to save
         if git diff --cached --quiet; then
           echo "No new map data to upload."
         else
